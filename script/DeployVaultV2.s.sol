@@ -96,6 +96,7 @@ contract DeployVaultV2 is Script {
         string name;
         string symbol;
         uint256 maxRate;
+        address additionalAllocator;
     }
 
     /**
@@ -120,6 +121,8 @@ contract DeployVaultV2 is Script {
         require(bytes(config.symbol).length > 0, "Symbol cannot be empty");
         config.maxRate = vm.envUint("MAX_RATE");
         require(config.maxRate > 0, "Max rate not set");
+        config.additionalAllocator =
+            vm.envExists("ADDITIONAL_ALLOCATOR") ? vm.envAddress("ADDITIONAL_ALLOCATOR") : address(0);
     }
 
     /**
@@ -147,17 +150,28 @@ contract DeployVaultV2 is Script {
 
         // Phase 3: Deploy and configure Morpho adapter
         address morphoAdapterAddress = _deployAndConfigureMorphoAdapter(
-            config.morphoAdapterFactoryAddress, address(deployedVaultV2), address(config.sourceVaultV1) // +1tx
+            config.morphoAdapterFactoryAddress,
+            address(deployedVaultV2),
+            address(config.sourceVaultV1) // +1tx
         );
 
         // Phase 4: Submit timelocked configuration changes
         _submitTimelockedConfigurationChanges(
-            deployedVaultV2, transactionOriginator, config.vaultAllocator, config.adapterRegistry, morphoAdapterAddress // +6-8txs
+            deployedVaultV2,
+            transactionOriginator,
+            config.vaultAllocator,
+            config.adapterRegistry,
+            morphoAdapterAddress // +6-8txs
         );
 
         // Phase 5: Execute immediate configuration changes
         _executeImmediateConfigurationChanges(
-            deployedVaultV2, transactionOriginator, config.vaultAllocator, config.adapterRegistry, morphoAdapterAddress
+            deployedVaultV2,
+            transactionOriginator,
+            config.vaultAllocator,
+            config.adapterRegistry,
+            morphoAdapterAddress,
+            config.additionalAllocator
         );
 
         // Phase 6: Configure timelock settings
@@ -281,13 +295,17 @@ contract DeployVaultV2 is Script {
         address temporaryAllocator,
         address finalAllocator,
         address registry,
-        address adapter
+        address adapter,
+        address additionalAllocator
     ) internal {
         // Execute adapter registry configuration
         vault.setAdapterRegistry(registry);
 
         // Execute allocator role configuration
         vault.setIsAllocator(temporaryAllocator, true);
+        if (additionalAllocator != address(0)) {
+            vault.setIsAllocator(additionalAllocator, true);
+        }
 
         // Execute adapter configuration
         vault.addAdapter(adapter);
