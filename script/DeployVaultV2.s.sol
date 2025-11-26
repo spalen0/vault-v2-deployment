@@ -70,7 +70,10 @@ contract DeployVaultV2 is Script {
             adapterRegistry: adapterRegistry,
             vaultV2FactoryAddress: vaultV2FactoryAddress,
             morphoAdapterFactoryAddress: morphoAdapterFactoryAddress,
-            initialDeadDepositAmount: initialDeadDepositAmount
+            initialDeadDepositAmount: initialDeadDepositAmount,
+            name: "",
+            symbol: "",
+            maxRate: 0
         });
 
         return deployVaultV2WithConfig(config);
@@ -90,6 +93,9 @@ contract DeployVaultV2 is Script {
         address vaultV2FactoryAddress;
         address morphoAdapterFactoryAddress;
         uint256 initialDeadDepositAmount;
+        string name;
+        string symbol;
+        uint256 maxRate;
     }
 
     /**
@@ -102,11 +108,18 @@ contract DeployVaultV2 is Script {
         config.vaultAllocator = vm.envAddress("ALLOCATOR");
         config.vaultSentinel = vm.envExists("SENTINEL") ? vm.envAddress("SENTINEL") : address(0);
         config.timelockDurationSeconds = vm.envExists("TIMELOCK_DURATION") ? vm.envUint("TIMELOCK_DURATION") : 0;
+        require(config.timelockDurationSeconds >= 7 days, "Timelock duration must be greater than 7 days");
         config.sourceVaultV1 = IVaultV1(vm.envAddress("VAULT_V1"));
         config.adapterRegistry = vm.envAddress("ADAPTER_REGISTRY");
         config.vaultV2FactoryAddress = vm.envAddress("VAULT_V2_FACTORY");
         config.morphoAdapterFactoryAddress = vm.envAddress("MORPHO_VAULT_V1_ADAPTER_FACTORY");
         config.initialDeadDepositAmount = vm.envExists("DEAD_DEPOSIT_AMOUNT") ? vm.envUint("DEAD_DEPOSIT_AMOUNT") : 0;
+        config.name = vm.envString("NAME");
+        config.symbol = vm.envString("SYMBOL");
+        require(bytes(config.name).length > 0, "Name cannot be empty");
+        require(bytes(config.symbol).length > 0, "Symbol cannot be empty");
+        config.maxRate = vm.envUint("MAX_RATE");
+        require(config.maxRate > 0, "Max rate not set");
     }
 
     /**
@@ -121,19 +134,25 @@ contract DeployVaultV2 is Script {
 
         // Phase 1: Deploy VaultV2 instance
         VaultV2 deployedVaultV2 =
-            _deployVaultV2Instance(config.vaultV2FactoryAddress, transactionOriginator, config.sourceVaultV1.asset());
+            _deployVaultV2Instance(config.vaultV2FactoryAddress, transactionOriginator, config.sourceVaultV1.asset()); // +1tx
 
         // Phase 2: Configure temporary permissions
-        _configureTemporaryPermissions(deployedVaultV2, transactionOriginator);
+        _configureTemporaryPermissions(deployedVaultV2, transactionOriginator); // +1tx
+
+        // Phase 2.1: Set name, symbol and max rate
+        deployedVaultV2.setName(config.name);
+        deployedVaultV2.setSymbol(config.symbol);
+        console.log("Name set to:", config.name);
+        console.log("Symbol set to:", config.symbol);
 
         // Phase 3: Deploy and configure Morpho adapter
         address morphoAdapterAddress = _deployAndConfigureMorphoAdapter(
-            config.morphoAdapterFactoryAddress, address(deployedVaultV2), address(config.sourceVaultV1)
+            config.morphoAdapterFactoryAddress, address(deployedVaultV2), address(config.sourceVaultV1) // +1tx
         );
 
         // Phase 4: Submit timelocked configuration changes
         _submitTimelockedConfigurationChanges(
-            deployedVaultV2, transactionOriginator, config.vaultAllocator, config.adapterRegistry, morphoAdapterAddress
+            deployedVaultV2, transactionOriginator, config.vaultAllocator, config.adapterRegistry, morphoAdapterAddress // +6-8txs
         );
 
         // Phase 5: Execute immediate configuration changes
@@ -148,6 +167,11 @@ contract DeployVaultV2 is Script {
 
         // Phase 7: Set final role assignments
         _setFinalRoleAssignments(deployedVaultV2, config.vaultOwner, config.vaultCurator, config.vaultSentinel);
+
+        if (config.maxRate > 0) {
+            deployedVaultV2.setMaxRate(config.maxRate);
+            console.log("Max rate set to:", config.maxRate);
+        }
 
         // Phase 8: Execute dead deposit if specified
         if (config.initialDeadDepositAmount > 0) {
@@ -296,23 +320,33 @@ contract DeployVaultV2 is Script {
         timelockedSelectors[0] = IVaultV2.setReceiveSharesGate.selector;
         timelockedSelectors[1] = IVaultV2.setSendSharesGate.selector;
         timelockedSelectors[2] = IVaultV2.setReceiveAssetsGate.selector;
-        timelockedSelectors[3] = IVaultV2.addAdapter.selector;
-        timelockedSelectors[4] = IVaultV2.increaseAbsoluteCap.selector;
-        timelockedSelectors[5] = IVaultV2.increaseRelativeCap.selector;
+        timelockedSelectors[3] = IVaultV2.abdicate.selector;
+        timelockedSelectors[4] = IVaultV2.removeAdapter.selector;
+        timelockedSelectors[5] = IVaultV2.increaseTimelock.selector;
         timelockedSelectors[6] = IVaultV2.setForceDeallocatePenalty.selector;
-        timelockedSelectors[7] = IVaultV2.abdicate.selector;
-        timelockedSelectors[8] = IVaultV2.removeAdapter.selector;
-        timelockedSelectors[9] = IVaultV2.increaseTimelock.selector;
+        timelockedSelectors[7] = IVaultV2.addAdapter.selector;
+        timelockedSelectors[8] = IVaultV2.increaseAbsoluteCap.selector;
+        timelockedSelectors[9] = IVaultV2.increaseRelativeCap.selector;
+
+        // 3 day timelocks: increaseRelativeCap, increaseAbsoluteCap, addAdapter, setForceDeallocatePenalty
+        uint256 threeDayTimelock = 3 days + 100;
+        uint256 threeDayTimelockIndex = 6;
 
         // Submit timelock increases for all selectors
-        for (uint256 i = 0; i < timelockedSelectors.length; i++) {
+        for (uint256 i = 0; i < threeDayTimelockIndex; i++) {
             vault.submit(abi.encodeCall(vault.increaseTimelock, (timelockedSelectors[i], timelockDurationSeconds)));
+        }
+        for (uint256 i = threeDayTimelockIndex; i < timelockedSelectors.length; i++) {
+            vault.submit(abi.encodeCall(vault.increaseTimelock, (timelockedSelectors[i], threeDayTimelock)));
         }
         console.log("Timelock increases submitted for", timelockedSelectors.length, "functions");
 
         // Execute timelock increases for all selectors
-        for (uint256 i = 0; i < timelockedSelectors.length; i++) {
+        for (uint256 i = 0; i < threeDayTimelockIndex; i++) {
             vault.increaseTimelock(timelockedSelectors[i], timelockDurationSeconds);
+        }
+        for (uint256 i = threeDayTimelockIndex; i < timelockedSelectors.length; i++) {
+            vault.increaseTimelock(timelockedSelectors[i], threeDayTimelock);
         }
         console.log("Timelock increases executed for", timelockedSelectors.length, "functions");
     }
