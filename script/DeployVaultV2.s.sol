@@ -73,7 +73,8 @@ contract DeployVaultV2 is Script {
             initialDeadDepositAmount: initialDeadDepositAmount,
             name: "",
             symbol: "",
-            maxRate: 0
+            maxRate: 0,
+            additionalAllocator: address(0)
         });
 
         return deployVaultV2WithConfig(config);
@@ -161,7 +162,8 @@ contract DeployVaultV2 is Script {
             transactionOriginator,
             config.vaultAllocator,
             config.adapterRegistry,
-            morphoAdapterAddress // +6-8txs
+            morphoAdapterAddress, // +6-8txs
+            config.additionalAllocator
         );
 
         // Phase 5: Execute immediate configuration changes
@@ -258,13 +260,17 @@ contract DeployVaultV2 is Script {
         address temporaryAllocator,
         address finalAllocator,
         address registry,
-        address adapter
+        address adapter,
+        address additionalAllocator
     ) internal {
         // Submit allocator role changes
         vault.submit(abi.encodeCall(vault.setIsAllocator, (temporaryAllocator, true)));
         if (temporaryAllocator != finalAllocator) {
             vault.submit(abi.encodeCall(vault.setIsAllocator, (temporaryAllocator, false)));
             vault.submit(abi.encodeCall(vault.setIsAllocator, (finalAllocator, true)));
+        }
+        if (additionalAllocator != address(0)) {
+            vault.submit(abi.encodeCall(vault.setIsAllocator, (additionalAllocator, true)));
         }
 
         // Submit adapter registry configuration
