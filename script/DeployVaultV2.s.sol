@@ -8,7 +8,6 @@ import {VaultV2} from "vault-v2/VaultV2.sol";
 import {VaultV2Factory} from "vault-v2/VaultV2Factory.sol";
 import {MorphoVaultV1AdapterFactory} from "vault-v2/adapters/MorphoVaultV1AdapterFactory.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {ERC20Mock} from "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
 import {IERC4626 as IVaultV1} from "openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 /**
@@ -120,10 +119,13 @@ contract DeployVaultV2 is Script {
         config.symbol = vm.envString("SYMBOL");
         require(bytes(config.name).length > 0, "Name cannot be empty");
         require(bytes(config.symbol).length > 0, "Symbol cannot be empty");
+        console.log("Name set to:", config.name);
+        console.log("Symbol set to:", config.symbol);
         config.maxRate = vm.envUint("MAX_RATE");
         require(config.maxRate > 0, "Max rate not set");
         config.additionalAllocator =
             vm.envExists("ADDITIONAL_ALLOCATOR") ? vm.envAddress("ADDITIONAL_ALLOCATOR") : address(0);
+        console.log("Additional allocator set to:", config.additionalAllocator);
     }
 
     /**
@@ -331,6 +333,20 @@ contract DeployVaultV2 is Script {
         // Abdicate setAdapterRegistry function to prevent future changes
         vault.submit(abi.encodeCall(vault.abdicate, (IVaultV2.setAdapterRegistry.selector)));
         vault.abdicate(IVaultV2.setAdapterRegistry.selector);
+        console.log("setAdapterRegistry abdicated");
+
+        // Abdicate set Gates functions to prevent future changes
+        vault.submit(abi.encodeCall(vault.abdicate, (IVaultV2.setReceiveSharesGate.selector)));
+        vault.abdicate(IVaultV2.setReceiveSharesGate.selector);
+        console.log("setReceiveSharesGate abdicated");
+
+        vault.submit(abi.encodeCall(vault.abdicate, (IVaultV2.setSendSharesGate.selector)));
+        vault.abdicate(IVaultV2.setSendSharesGate.selector);
+        console.log("setSendSharesGate abdicated");
+
+        vault.submit(abi.encodeCall(vault.abdicate, (IVaultV2.setReceiveAssetsGate.selector)));
+        vault.abdicate(IVaultV2.setReceiveAssetsGate.selector);
+        console.log("setReceiveAssetsGate abdicated");
     }
 
     /**
