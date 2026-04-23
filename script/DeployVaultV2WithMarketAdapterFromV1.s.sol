@@ -20,6 +20,8 @@ interface IMetaMorphoV1 {
     function asset() external view returns (address);
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
+    function fee() external view returns (uint96);
+    function feeRecipient() external view returns (address);
 }
 
 /**
@@ -151,6 +153,20 @@ contract DeployVaultV2WithMarketAdapterFromV1 is Script {
         // Phase 5.1: setMaxRate requires allocator role — deployer is allocator.
         vault.setMaxRate(config.maxRate);
         console.log("  MaxRate:", config.maxRate);
+
+        // Phase 5.2: Mirror performance fee + recipient from the source V1 vault.
+        // Both selectors are timelocked but timelock is still 0, so submit + execute in one shot.
+        // Invariant (VaultV2.sol:508): recipient must be non-zero if fee > 0 — set recipient first.
+        uint256 v1Fee = uint256(IMetaMorphoV1(config.sourceVaultV1).fee());
+        address v1FeeRecipient = IMetaMorphoV1(config.sourceVaultV1).feeRecipient();
+        vault.submit(abi.encodeCall(vault.setPerformanceFeeRecipient, (v1FeeRecipient)));
+        vault.setPerformanceFeeRecipient(v1FeeRecipient);
+        if (v1Fee > 0) {
+            vault.submit(abi.encodeCall(vault.setPerformanceFee, (v1Fee)));
+            vault.setPerformanceFee(v1Fee);
+        }
+        console.log("  PerformanceFeeRecipient (from V1):", v1FeeRecipient);
+        console.log("  PerformanceFee (from V1):", v1Fee);
 
         // Phase 7: Seed every non-idle market from the source V1 vault + set liquidity adapter.
         // Requires curator (vault.submit) + allocator (setLiquidityAdapterAndData).
