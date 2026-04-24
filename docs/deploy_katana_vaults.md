@@ -1,11 +1,12 @@
-# Katana mainnet deployment — WETH & USDC V2 vaults
+# Katana mainnet deployment — WETH / USDC / WBTC V2 vaults
 
-Two vaults, one script (`script/DeployVaultV2WithMarketAdapterFromV1.s.sol`):
+Three vaults, one script (`script/DeployVaultV2WithMarketAdapterFromV1.s.sol`):
 
 | V2 Vault | Source V1 | Asset | Liquidity market |
 |---|---|---|---|
 | Yearn OG ETH V2 | [`0xFaDe...dc2E`](https://app.morpho.org/katana/vault/0xFaDe0C546f44e33C134c4036207B314AC643dc2E/yearn-og-eth) | vbETH (18 dec) | weETH collateral |
 | Yearn OG USDC V2 | [`0xCE2b...29D7`](https://app.morpho.org/katana/vault/0xCE2b8e464Fc7b5E58710C24b7e5EBFB6027f29D7/yearn-og-usdc) | vbUSDC (6 dec) | vbETH collateral |
+| Yearn OG WBTC V2 | [`0xe107...9859`](https://app.morpho.org/katana/vault/0xe107cCdeb8e20E499545C813f98Cc90619b29859/yearn-og-wbtc) | vbWBTC (8 dec) | LBTC collateral |
 
 Names and symbols are inherited from the V1 vaults automatically (no `NAME` / `SYMBOL` env vars needed).
 
@@ -15,18 +16,19 @@ Names and symbols are inherited from the V1 vaults automatically (no `NAME` / `S
 
 The deployer is the EOA (or address behind your Ledger) you sign with. Tokens are pulled from `tx.origin` for the dead deposits. **No new Morpho Blue markets are deployed** — all markets involved are the existing ones the V1 vault already allocates to.
 
-| Asset | ETH vault deploy | USDC vault deploy | Why |
-|---|---|---|---|
-| **ETH** (gas) | ~0.02 ETH | ~0.03 ETH | ~16M gas for ETH deploy, ~22M gas for USDC deploy |
-| **vbETH** | **2 gwei** (`2_000_000_000` wei) ceiling | — | Phase 8 vault dead deposit (1 gwei) + Phase 7 Morpho market dead deposit (1 gwei, usually skipped) |
-| **vbUSDC** | — | **2 USDC** (`2_000_000` wei) ceiling | Same breakdown — $1 vault dead deposit + $1 Morpho market dead deposit (usually skipped) |
+| Asset | ETH vault | USDC vault | WBTC vault | Why |
+|---|---|---|---|---|
+| **ETH** (gas) | ~0.02 ETH | ~0.03 ETH | ~0.02 ETH | ~16M / 22M / 15M gas respectively |
+| **vbETH** | **2 gwei** (`2_000_000_000`) ceiling | — | — | Phase 8 (1 gwei) + Phase 7 Morpho market dead deposit (1 gwei, usually skipped) |
+| **vbUSDC** | — | **2 USDC** (`2_000_000`) ceiling | — | $1 vault dead deposit + $1 Morpho market dead deposit (usually skipped) |
+| **vbWBTC** | — | — | **2000 sats** (`2_000`) ceiling | 1000 sats vault + 1000 sats Morpho market dead deposit (usually skipped) |
 
 **Budget vs. expected:**
 
-- **Phase 8 (vault dead deposit) always runs** — this is the deposit into the freshly deployed V2 vault, sending shares to `0xdead` so the vault can't be share-inflated. Requires 1 gwei vbETH (ETH vault) or 1 USDC (USDC vault).
-- **Phase 7 (Morpho market dead deposit) usually skips** — the script only supplies if the existing liquidity-target market doesn't already have a `0xdead` supply position ≥ `DEAD_DEPOSIT_AMOUNT`. Since these markets are live and the threshold is tiny (1 gwei / $1), this almost always skips.
+- **Phase 8 (vault dead deposit) always runs** — this is the deposit into the freshly deployed V2 vault, sending shares to `0xdead` so the vault can't be share-inflated. Requires 1 gwei vbETH / $1 vbUSDC / 1000 sats vbWBTC.
+- **Phase 7 (Morpho market dead deposit) usually skips** — the script only supplies if the existing liquidity-target market doesn't already have a `0xdead` supply position ≥ `DEAD_DEPOSIT_AMOUNT`. Since these markets are live and the threshold is tiny, this almost always skips.
 
-So the realistic cost is **~1 gwei vbETH + $1 USDC + ~0.05 ETH gas**, but keep the `2x` ceiling in the wallet in case the market hasn't been seeded at `0xdead` yet.
+Realistic cost is half the ceiling; keep the full `2x` figure in the wallet as a safety margin.
 
 Which existing Morpho Blue market gets the (possibly-skipped) dead deposit:
 
@@ -34,6 +36,7 @@ Which existing Morpho Blue market gets the (possibly-skipped) dead deposit:
 |---|---|---|
 | Yearn OG ETH V2 | weETH / vbETH | `0x1e74d36ffbda65b8a45d72754b349cdd5ce807c5fa814f91ba8e3cd27881c34b` |
 | Yearn OG USDC V2 | vbETH / vbUSDC | `0x2fb14719030835b8e0a39a1461b384ad6a9c8392550197a7c857cf9fcbd6c534` |
+| Yearn OG WBTC V2 | LBTC / vbWBTC | `0x60b54e17d55b765955a20908ed5143192a48df7fd3833f7f7fe86504bf6c4c1a` |
 
 The deployer EOA does **not** need to be the final owner. The script hands ownership off to `OWNER` in Phase 6, so you can deploy from a disposable EOA and point `OWNER` at your multisig.
 
@@ -121,6 +124,29 @@ forge script script/DeployVaultV2WithMarketAdapterFromV1.s.sol:DeployVaultV2With
 ```
 
 Expected V1 → V2 market mapping: 12 non-idle markets (vbETH, vbWBTC, LBTC, weETH, BTC.b, yvvbUSDT, yvvbWBTC, yvvbETH, yvAUSD, wstETH, KAT, siUSD), 1 idle market skipped.
+
+---
+
+## 4b. Deploy Yearn OG WBTC V2
+
+```bash
+export ASSET=0x0913DA6Da4b42f538B445599b46Bb4622342Cf52                       # vbWBTC (8 dec)
+export VAULT_V1=0xe107cCdeb8e20E499545C813f98Cc90619b29859                    # Yearn OG WBTC V1
+export LIQUIDITY_COLLATERAL_TOKEN=0xecAc9C5F704e954931349Da37F60E39f515c11c1  # LBTC (WBTC→LBTC rule)
+export ADAPTER_ABSOLUTE_CAP=100000000000                                      # 1000 WBTC (~$100M)
+export DEAD_DEPOSIT_AMOUNT=1000                                               # 1000 sats (~$1)
+unset NAME SYMBOL                                                             # inherit from V1
+
+# Dry-run first
+forge script script/DeployVaultV2WithMarketAdapterFromV1.s.sol:DeployVaultV2WithMarketAdapterFromV1 \
+  --rpc-url $RPC $SIGNER_FLAGS
+
+# Broadcast
+forge script script/DeployVaultV2WithMarketAdapterFromV1.s.sol:DeployVaultV2WithMarketAdapterFromV1 \
+  --rpc-url $RPC $SIGNER_FLAGS --broadcast --slow
+```
+
+Expected V1 → V2 market mapping: 2 non-idle markets (LBTC, yvvbUSDT), 1 idle market skipped. Inherited fee 10%, recipient `0x518C…0149`.
 
 ---
 
